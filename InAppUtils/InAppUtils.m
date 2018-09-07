@@ -39,7 +39,10 @@ RCT_EXPORT_MODULE();
                 NSString *key = transaction.payment.productIdentifier;
                 NSDictionary promiseBlock = _promiseBlocks[key];
                 if (promiseBlock) {
-                    promiseBlock[@"reject"](@[RCTJSErrorFromNSError(transaction.error)]);
+                    RCTPromiseRejectBlock reject = promiseBlock[@"reject"];
+                    if (reject) {
+                        reject(@"payment_failed", nil, transaction.error);
+                    }
                     [_promiseBlocks removeObjectForKey:key];
                 } else {
                     RCTLogWarn(@"No resolver registered for transaction with state failed.");
@@ -52,7 +55,10 @@ RCT_EXPORT_MODULE();
                 NSDictionary promiseBlock = _promiseBlocks[key];
                 if (promiseBlock) {
                     NSDictionary *purchase = [self getPurchaseData:transaction];
-                    promiseBlock[@"resolve"](purchase);
+                    RCTPromiseResolveBlock resolve = promiseBlock[@"resolve"];
+                    if (resolve) {
+                        resolve(purchase);
+                    }
                     [_promiseBlocks removeObjectForKey:key];
                 } else {
                     RCTLogWarn(@"No resolver registered for transaction with state purchased.");
@@ -145,9 +151,8 @@ RCT_EXPORT_METHOD(purchaseProduct:(NSString *)productIdentifier
                                                       @"resolve": resolve,
                                                       @"reject": reject,
                                                       };
-        };
     } else {
-        reject(RCTMakeError(@"invalid_product", nil, nil));
+        reject(@"invalid_product", nil, nil);
     }
 }
 
@@ -161,12 +166,12 @@ RCT_EXPORT_METHOD(finishPurchase:(NSString *)transactionIdentifier
                 [[SKPaymentQueue defaultQueue] finishTransaction:transaction];
                 resolve([NSNull null]);
             } else {
-                reject(RCTMakeError(@"invalid_purchase", nil, nil));
+                reject(@"invalid_purchase", nil, nil);
             }
             return;
         }
     }
-    reject(RCTMakeError(@"invalid_purchase", nil, nil));
+    reject(@"invalid_purchase", nil, nil);
 }
 
 
@@ -176,16 +181,18 @@ restoreCompletedTransactionsFailedWithError:(NSError *)error
     NSString *key = @"restoreRequest";
     NSDictionary promiseBlock = _promiseBlocks[key];
     if (promiseBlock) {
-        switch (error.code)
-        {
-            case SKErrorPaymentCancelled:
-                promiseBlock[@"reject"](RCTMakeError(@"user_cancelled", nil, nil));
-                break;
-            default:
-                promiseBlock[@"reject"](RCTMakeError(@"restore_failed", nil, nil));
-                break;
+        RCTPromiseRejectBlock reject = promiseBlock[@"reject"];
+        if (reject) {
+            switch (error.code)
+            {
+                case SKErrorPaymentCancelled:
+                    reject(@"user_cancelled", nil, nil);
+                    break;
+                default:
+                    reject(@"restore_failed", nil, nil);
+                    break;
+            }
         }
-
         [_promiseBlocks removeObjectForKey:key];
     } else {
         RCTLogWarn(@"No resolver registered for restore product request.");
@@ -197,17 +204,20 @@ restoreCompletedTransactionsFailedWithError:(NSError *)error
     NSString *key = @"restoreRequest";
     NSDictionary promiseBlock = _promiseBlocks[key];
     if (promiseBlock) {
-        NSMutableArray *productsArrayForJS = [NSMutableArray array];
-        for(SKPaymentTransaction *transaction in queue.transactions){
-            if(transaction.transactionState == SKPaymentTransactionStateRestored) {
+        RCTPromiseResolveBlock resolve = promiseBlock[@"resolve"];
+        if (resolve) {
+            NSMutableArray *productsArrayForJS = [NSMutableArray array];
+            for(SKPaymentTransaction *transaction in queue.transactions){
+                if(transaction.transactionState == SKPaymentTransactionStateRestored) {
 
-                NSDictionary *purchase = [self getPurchaseData:transaction];
+                    NSDictionary *purchase = [self getPurchaseData:transaction];
 
-                [productsArrayForJS addObject:purchase];
-                [[SKPaymentQueue defaultQueue] finishTransaction:transaction];
+                    [productsArrayForJS addObject:purchase];
+                    [[SKPaymentQueue defaultQueue] finishTransaction:transaction];
+                }
             }
+            resolve(productsArrayForJS);
         }
-        promiseBlock[@"resolve"](productsArrayForJS);
         [_promiseBlocks removeObjectForKey:key];
     } else {
         RCTLogWarn(@"No resolver registered for restore product request.");
@@ -231,7 +241,7 @@ RCT_EXPORT_METHOD(restorePurchasesForUser:(NSString *)username
 {
     NSString *restoreRequest = @"restoreRequest";
     if(!username) {
-        reject(RCTMakeError(@"username_required", nil, nil));
+        reject(@"username_required", nil, nil);
         return;
     }
     _promiseBlocks[restoreRequest] = @{
@@ -260,7 +270,7 @@ RCT_EXPORT_METHOD(canMakePayments:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
     BOOL canMakePayments = [SKPaymentQueue canMakePayments];
-    resolve(canMakePayments);
+    resolve(@(canMakePayments));
 }
 
 RCT_EXPORT_METHOD(receiptData:(RCTPromiseResolveBlock)resolve
@@ -268,7 +278,7 @@ RCT_EXPORT_METHOD(receiptData:(RCTPromiseResolveBlock)resolve
 {
     NSString *receipt = [self grandUnifiedReceipt];
     if (receipt == nil) {
-      reject(RCTMakeError(@"not_available", nil, nil));
+      reject(@"not_available", nil, nil);
     } else {
       resolve(receipt);
     }
@@ -291,25 +301,28 @@ RCT_EXPORT_METHOD(receiptData:(RCTPromiseResolveBlock)resolve
      didReceiveResponse:(SKProductsResponse *)response
 {
     NSString *key = RCTKeyForInstance(request);
-    NSDictionary promiseBlock = _promiseBlocks[key];
+    NSDictionary *promiseBlock = _promiseBlocks[key];
     if (promiseBlock) {
-        products = [NSMutableArray arrayWithArray:response.products];
-        NSMutableArray *productsArrayForJS = [NSMutableArray array];
-        for(SKProduct *item in response.products) {
-            NSDictionary *product = @{
-                @"identifier": item.productIdentifier,
-                @"price": item.price,
-                @"currencySymbol": [item.priceLocale objectForKey:NSLocaleCurrencySymbol],
-                @"currencyCode": [item.priceLocale objectForKey:NSLocaleCurrencyCode],
-                @"priceString": item.priceString,
-                @"countryCode": [item.priceLocale objectForKey: NSLocaleCountryCode],
-                @"downloadable": item.isDownloadable ? @"true" : @"false" ,
-                @"description": item.localizedDescription ? item.localizedDescription : @"",
-                @"title": item.localizedTitle ? item.localizedTitle : @"",
-            };
-            [productsArrayForJS addObject:product];
+            RCTPromiseResolveBlock resolve = promiseBlock[@"resolve"];
+            if (resolve) {
+            products = [NSMutableArray arrayWithArray:response.products];
+            NSMutableArray *productsArrayForJS = [NSMutableArray array];
+            for(SKProduct *item in response.products) {
+                NSDictionary *product = @{
+                    @"identifier": item.productIdentifier,
+                    @"price": item.price,
+                    @"currencySymbol": [item.priceLocale objectForKey:NSLocaleCurrencySymbol],
+                    @"currencyCode": [item.priceLocale objectForKey:NSLocaleCurrencyCode],
+                    @"priceString": item.priceString,
+                    @"countryCode": [item.priceLocale objectForKey: NSLocaleCountryCode],
+                    @"downloadable": item.isDownloadable ? @"true" : @"false" ,
+                    @"description": item.localizedDescription ? item.localizedDescription : @"",
+                    @"title": item.localizedTitle ? item.localizedTitle : @"",
+                };
+                [productsArrayForJS addObject:product];
+            }
+            resolve(productsArrayForJS);
         }
-        promiseBlock[@"resolve"](productsArrayForJS);
         [_promiseBlocks removeObjectForKey:key];
     } else {
         RCTLogWarn(@"No resolver registered for load product request.");
@@ -319,9 +332,12 @@ RCT_EXPORT_METHOD(receiptData:(RCTPromiseResolveBlock)resolve
 // SKProductsRequestDelegate network error
 - (void)request:(SKRequest *)request didFailWithError:(NSError *)error{
     NSString *key = RCTKeyForInstance(request);
-    NSDictionary promiseBlock = _promiseBlocks[key];
+    NSDictionary *promiseBlock = _promiseBlocks[key];
     if(promiseBlock) {
-        promiseBlock[@"reject"](@[RCTJSErrorFromNSError(error)]);
+        RCTPromiseRejectBlock reject = promiseBlock[@"reject"];
+        if (reject) {
+            reject(@"request_failed", nil, error);
+        }
         [_promiseBlocks removeObjectForKey:key];
     }
 }
