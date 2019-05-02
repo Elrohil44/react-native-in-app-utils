@@ -3,6 +3,7 @@
 #import <React/RCTLog.h>
 #import <React/RCTUtils.h>
 #import "SKProduct+StringPrice.h"
+#import "SKProductDiscount+StringPrice.h"
 
 @implementation InAppUtils
 {
@@ -437,6 +438,7 @@ RCT_EXPORT_METHOD(receiptData:(RCTPromiseResolveBlock)resolve
                                                 @"currencySymbol": [product.introductoryPrice.priceLocale objectForKey:NSLocaleCurrencySymbol],
                                                 @"currencyCode": [product.introductoryPrice.priceLocale objectForKey:NSLocaleCurrencyCode],
                                                 @"countryCode": [product.introductoryPrice.priceLocale objectForKey: NSLocaleCountryCode],
+                                                @"priceString": product.introductoryPrice.priceString,
                                                 @"numberOfPeriods": [[NSNumber alloc] initWithLong:product.introductoryPrice.numberOfPeriods],
                                                 @"paymentMode": paymentMode,
                                                 @"subscriptionPeriod": subscriptionPeriod,
